@@ -1,0 +1,187 @@
+import torch
+import torch.nn as nn
+import random
+import numpy as np
+import pandas as pd
+from sklearn.model_selection import train_test_split
+
+# 数据读取及处理
+data = pd.read_excel("D:/电脑资料随时拷贝/机器学习样本(LJ Paper)/bpnn1(modified).xlsx", sheet_name='Sheet3-2-1', header=None)
+x, y = data.iloc[:, :-1], data.iloc[:, -1]
+x_train, x_test, y_train, y_test = train_test_split(x, y, train_size=0.90, random_state=89)
+x_train = x_train.astype(np.float32)
+y_train = y_train.astype(np.float32)
+x_test = x_test.astype(np.float32)
+y_test = y_test.astype(np.float32)
+
+# 定义回归网络模型
+class RegressionNet(nn.Module):
+    def __init__(self, n_feature, n_output):
+        super(RegressionNet, self).__init__()  # 继承父类
+        self.hidden1 = nn.Linear(n_feature, 30)  # 加入隐藏层
+        self.hidden2 = nn.Linear(30, 50)
+        self.hidden3 = nn.Linear(50, 90)
+        self.hidden4 = nn.Linear(90, 130)
+        self.predict = nn.Linear(130, n_output)  # 定义线性回归模型
+
+    def forward(self, x):  # 定义向前传播函数
+        out = self.hidden1(x)
+        out = torch.relu(out)  # 加入激活函数，连接非线性层
+        out = self.hidden2(out)
+        out = torch.relu(out)
+        out = self.hidden3(out)
+        out = torch.relu(out)
+        out = self.hidden4(out)
+        out = torch.relu(out)
+        out = self.predict(out)
+        return out
+
+# 遗传算法
+class GeneticAlgorithm:
+    def __init__(self, population_size, mutation_rate, n_generations):
+        self.population_size = population_size
+        self.mutation_rate = mutation_rate
+        self.n_generations = n_generations
+        self.population = []
+
+    def initialize_population(self, model):
+        """初始化种群"""
+        for _ in range(self.population_size):
+            individual = []
+            for param in model.parameters():
+                individual.append(torch.randn_like(param))  # 随机生成权重
+            self.population.append(individual)
+
+    def fitness(self, model, x_train, y_train):
+        """评估适应度"""
+        losses = []
+        for individual in self.population:
+            self.set_weights(model, individual)
+            with torch.no_grad():
+                y_pred = model(torch.tensor(x_train.to_numpy()))
+                loss = nn.MSELoss()(y_pred.squeeze(), torch.tensor(y_train.to_numpy()))
+                losses.append(loss.item())
+        return losses
+
+    def set_weights(self, model, individual):
+        """设置模型权重和偏置"""
+        for i, param in enumerate(model.parameters()):
+            param.data = individual[i]
+
+    def select_parents(self, fitness):
+        """选择父母"""
+        idx = np.argsort(fitness)
+        return [self.population[i] for i in idx[:2]]  # 选择适应度最好的两个个体作为父母
+
+    def crossover(self, parents):
+        """交叉"""
+        child = []
+        for i in range(len(parents[0])):
+            if random.random() < 0.5:
+                child.append(parents[0][i])
+            else:
+                child.append(parents[1][i])
+        return child
+
+    def mutate(self, child):
+        """变异"""
+        for i in range(len(child)):
+            if random.random() < self.mutation_rate:
+                child[i] += torch.randn_like(child[i]) * 0.1  # 轻微变动
+        return child
+
+    def evolve(self, model, x_train, y_train):
+        """演化种群"""
+        self.initialize_population(model)
+        for generation in range(self.n_generations):
+            fitness = self.fitness(model, x_train, y_train)
+            print(f"Generation {generation}: Best Fitness {min(fitness)}")
+            next_population = []
+            for _ in range(self.population_size):
+                parents = self.select_parents(fitness)
+                child = self.crossover(parents)
+                child = self.mutate(child)
+                next_population.append(child)
+            self.population = next_population
+
+# 初始化模型
+net = RegressionNet(6, 1)
+
+# 使用遗传算法优化初始权重
+ga = GeneticAlgorithm(population_size=10, mutation_rate=0.1, n_generations=20)
+ga.evolve(net, x_train, y_train)
+
+# 定义均方差损失MSE作为损失函数,预测值和真实值的误差计算公式 (均方差)
+loss_func = nn.MSELoss()
+
+# 定义优化器(随机梯度下降SGD)
+for i in range(15000):
+    optimizer = torch.optim.Adam(net.parameters(), lr=0.008)
+    x_data1 = torch.tensor(x_train.to_numpy())
+    y_data1 = torch.tensor(y_train.to_numpy())  # 定义样本标签
+    pred_train = net.forward(x_data1)  # 定义网络的前向运算，跟据x计算预测的y
+    pred_train = torch.squeeze(pred_train)  # 给pred删除维度，使得其与y_data的维度相同，才能进行下一步计算
+    loss_train = loss_func(pred_train, y_data1) * 1e-10
+
+    optimizer.zero_grad()  # 调用优化器，将梯度清零
+    loss_train.backward()  # 调用backward()进行反向传播
+    optimizer.step()  # 更新迭代次数
+
+    # 数据测试(也测试XXX次)
+    x_data2 = torch.tensor(x_test.to_numpy())
+    y_data2 = torch.tensor(y_test.to_numpy())  # 定义样本标签
+    pred_test = net.forward(x_data2)  # 定义网络的前向运算，跟据x计算预测的y
+    pred_test = pred_test.squeeze(1)  # 给pred删除维度，使得其与y_data的维度相同，才能进行下一步计算: 压缩1个维度
+    loss_test = loss_func(pred_test, y_data2) * 1e-11
+
+    if i == 14999:
+        for k in range(15000):
+            optimizer = torch.optim.Adam(net.parameters(), lr=0.0008)
+            x_data1 = torch.tensor(x_train.to_numpy())
+            y_data1 = torch.tensor(y_train.to_numpy())  # 定义样本标签
+            pred_train = net.forward(x_data1)  # 定义网络的前向运算，跟据x计算预测的y
+            pred_train = torch.squeeze(pred_train)  # 给pred删除维度，使得其与y_data的维度相同，才能进行下一步计算
+            loss_train = loss_func(pred_train, y_data1) * 1e-10
+
+            optimizer.zero_grad()  # 调用优化器，将梯度清零
+            loss_train.backward()  # 调用backward()进行反向传播
+            optimizer.step()  # 更新迭代次数
+
+            # 数据测试(也测试XXX次)
+            x_data2 = torch.tensor(x_test.to_numpy())
+            y_data2 = torch.tensor(y_test.to_numpy())  # 定义样本标签
+            pred_test = net.forward(x_data2)  # 定义网络的前向运算，跟据x计算预测的y
+            pred_test = pred_test.squeeze(1)  # 给pred删除维度，使得其与y_data的维度相同，才能进行下一步计算
+            loss_test = loss_func(pred_test, y_data2) * 1e-12
+
+            if k == 14999:
+                for m in range(30000):
+                    optimizer = torch.optim.Adam(net.parameters(), lr=0.00008)
+                    x_data1 = torch.tensor(x_train.to_numpy())
+                    y_data1 = torch.tensor(y_train.to_numpy())  # 定义样本标签
+                    pred_train = net.forward(x_data1)  # 定义网络的前向运算，跟据x计算预测的y
+                    pred_train = torch.squeeze(pred_train)  # 给pred删除维度，使得其与y_data的维度相同，才能进行下一步计算
+                    loss_train = loss_func(pred_train, y_data1) * 1e-10
+
+                    optimizer.zero_grad()  # 调用优化器，将梯度清零
+                    loss_train.backward()  # 调用backward()进行反向传播
+                    optimizer.step()  # 更新迭代次数
+
+                    # 数据测试(也测试XXX次)
+                    x_data2 = torch.tensor(x_test.to_numpy())
+                    y_data2 = torch.tensor(y_test.to_numpy())  # 定义样本标签
+                    pred_test = net.forward(x_data2)  # 定义网络的前向运算，跟据x计算预测的y
+                    pred_test = pred_test.squeeze(1)  # 给pred删除维度，使得其与y_data的维度相同，才能进行下一步计算
+                    loss_test = loss_func(pred_test, y_data2) * 1e-13
+
+                    print("ite:{},loss_train:{}".format(m, loss_train))  # 打印迭代次数和训练集loss的变化
+                    print("ite:{},loss_test:{}".format(m, loss_test))  # 打印迭代次数和测试集loss的变化
+                    print(y_data1)
+                    print(pred_train)
+                    print(y_data2)
+                    print(pred_test)
+                    print(pred_train.shape)
+                    print(y_data1.shape)
+
+# 保存模型
+torch.save(net, "model/model5.pkl")
